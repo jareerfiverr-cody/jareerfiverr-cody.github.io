@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Excel Formula X-Ray by Fluxelerate</title>
+<meta name="description" content="Upload any Excel workbook and see every formula dependency as an interactive map. Finds circular references, hardcoded numbers, broken links and inconsistent formulas in seconds. Runs 100% in your browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#0B0F14;--panel:#121820;--panel2:#171F29;--line:#233040;--ink:#E6EDF3;--muted:#8B9BB0;
+    --accent:#3DDC97;--accent2:#5B9CFF;--warn:#FFB454;--bad:#FF5C6C;--ref:#C084FC;
+    --mono:'IBM Plex Mono',ui-monospace,monospace;--sans:'Inter',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5}
+  a{color:var(--accent2)}
+  button{font:inherit;cursor:pointer}
+  .top{display:flex;align-items:center;gap:16px;padding:14px 22px;border-bottom:1px solid var(--line);background:var(--panel)}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em}
+  .brand .logo{width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;color:#0B0F14;font-family:var(--mono);font-weight:600;font-size:13px}
+  .brand small{display:block;font-weight:400;color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+  .top .grow{flex:1}
+  .btn{background:var(--panel2);border:1px solid var(--line);color:var(--ink);padding:8px 14px;border-radius:8px;font-weight:500;font-size:13px;display:inline-flex;align-items:center;gap:8px}
+  .btn:hover{border-color:#34455a}
+  .btn.primary{background:var(--accent);color:#06110C;border-color:transparent}
+  .btn.primary:hover{filter:brightness(1.08)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .badge{font-family:var(--mono);font-size:11px;padding:3px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+  .badge.pro{color:var(--accent);border-color:rgba(61,220,151,.35)}
+
+  /* landing / dropzone */
+  #landing{max-width:980px;margin:0 auto;padding:56px 22px 80px}
+  #landing h1{font-size:40px;line-height:1.1;letter-spacing:-.03em;font-weight:700;max-width:760px}
+  #landing h1 em{font-style:normal;color:var(--accent)}
+  #landing p.lead{color:var(--muted);font-size:17px;margin:16px 0 30px;max-width:640px}
+  .drop{border:1.5px dashed #2c3b4e;border-radius:16px;padding:44px 24px;text-align:center;background:var(--panel);transition:.15s;cursor:pointer}
+  .drop:hover,.drop.over{border-color:var(--accent);background:#0f1a17}
+  .drop .big{font-size:18px;font-weight:600}
+  .drop .sub{color:var(--muted);margin-top:6px;font-size:13px}
+  .drop .sub code{font-family:var(--mono);color:var(--ink)}
+  .feats{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-top:34px}
+  .feat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .feat b{display:block;margin-bottom:4px}
+  .feat span{color:var(--muted);font-size:13px}
+  .privacy{margin-top:26px;color:var(--muted);font-size:12px;display:flex;gap:8px;align-items:center}
+  .privacy i{width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block}
+
+  /* app */
+  #app{display:none;height:calc(100vh - 61px)}
+  #app.on{display:grid;grid-template-columns:300px 1fr 340px}
+  .side{border-right:1px solid var(--line);background:var(--panel);overflow:auto}
+  .side.right{border-right:0;border-left:1px solid var(--line)}
+  .sec{padding:14px 16px;border-bottom:1px solid var(--line)}
+  .sec h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;font-weight:600}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px}
+  .stat b{font-family:var(--mono);font-size:20px;display:block;line-height:1.1}
+  .stat span{font-size:11px;color:var(--muted)}
+  .issue{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:8px;cursor:pointer;border:1px solid transparent;margin-bottom:4px}
+  .issue:hover{background:var(--panel2);border-color:var(--line)}
+  .issue.active{background:var(--panel2);border-color:#34455a}
+  .issue .n{font-family:var(--mono);font-size:13px;padding:2px 8px;border-radius:6px;background:#0b1118}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:8px;flex-shrink:0}
+  .c-bad{background:var(--bad)}.c-warn{background:var(--warn)}.c-ref{background:var(--ref)}.c-acc{background:var(--accent2)}.c-out{background:var(--accent)}
+  .sheetlist label{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;cursor:pointer}
+  .sheetlist .sw{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+  .sheetlist .cnt{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .search{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);padding:8px 10px;border-radius:8px;font-family:var(--mono);font-size:13px;outline:0}
+  .search:focus{border-color:var(--accent2)}
+  #graphWrap{position:relative;background:radial-gradient(ellipse at 30% 20%,#101823 0%,var(--bg) 60%);overflow:hidden}
+  #graph{width:100%;height:100%;display:block}
+  .legend{position:absolute;left:14px;bottom:12px;display:flex;gap:14px;font-size:11px;color:var(--muted);background:rgba(11,15,20,.7);padding:6px 10px;border-radius:8px;backdrop-filter:blur(6px)}
+  .legend span{display:flex;align-items:center}
+  .hint{position:absolute;top:12px;left:14px;font-size:12px;color:var(--muted);background:rgba(11,15,20,.7);padding:6px 10px;border-radius:8px}
+  .toolbar{position:absolute;top:12px;right:14px;display:flex;gap:8px}
+  .node text{font-family:var(--mono);font-size:10px;fill:var(--ink);pointer-events:none;paint-order:stroke;stroke:#0B0F14;stroke-width:3px}
+  .link{stroke:#34455a;stroke-opacity:.55;fill:none}
+  .link.hi{stroke:var(--accent);stroke-opacity:1}
+  .link.hi-up{stroke:var(--accent2);stroke-opacity:1}
+  .node circle{stroke:#0B0F14;stroke-width:1.5px;cursor:pointer}
+  .node.dim{opacity:.15}
+  .link.dim{stroke-opacity:.06}
+  .detail .addr{font-family:var(--mono);font-size:18px;font-weight:600;color:var(--accent)}
+  .detail .f{font-family:var(--mono);font-size:12px;background:#0b1118;border:1px solid var(--line);border-radius:8px;padding:10px;margin:10px 0;white-space:pre-wrap;word-break:break-all;color:#d7e3f0}
+  .detail .val{font-size:12px;color:var(--muted)}
+  .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;margin:2px 4px 2px 0;border:1px solid}
+  .tag.bad{color:var(--bad);border-color:rgba(255,92,108,.4)}.tag.warn{color:var(--warn);border-color:rgba(255,180,84,.4)}.tag.ref{color:var(--ref);border-color:rgba(192,132,252,.4)}.tag.out{color:var(--accent);border-color:rgba(61,220,151,.4)}.tag.acc{color:var(--accent2);border-color:rgba(91,156,255,.4)}
+  .reflist{list-style:none;max-height:180px;overflow:auto}
+  .reflist li{font-family:var(--mono);font-size:12px;padding:4px 6px;border-radius:6px;cursor:pointer;color:#c9d6e3}
+  .reflist li:hover{background:var(--panel2);color:var(--ink)}
+  .empty{color:var(--muted);font-size:13px}
+  /* modal */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+  .modal.on{display:flex}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:26px;max-width:460px;width:100%}
+  .card h2{font-size:20px;letter-spacing:-.02em;margin-bottom:6px}
+  .card p{color:var(--muted);font-size:13px;margin-bottom:14px}
+  .card input{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);padding:10px 12px;border-radius:8px;font-family:var(--mono);font-size:13px;outline:0;margin-bottom:10px}
+  .card .row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+  .err{color:var(--bad);font-size:12px;min-height:18px;margin-bottom:6px}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#1b2532;border:1px solid var(--line);color:var(--ink);padding:10px 16px;border-radius:10px;font-size:13px;display:none;z-index:60}
+  .spin{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(11,15,20,.7);z-index:5;font-family:var(--mono);color:var(--muted)}
+  .spin.on{display:flex}
+  @media(max-width:1000px){#app.on{grid-template-columns:1fr}.side{display:none}}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="brand"><div class="logo">fx</div><div>Excel Formula X-Ray<small>by Fluxelerate</small></div></div>
+  <div class="grow"></div>
+  <span class="badge" id="licBadge">Free preview</span>
+  <button class="btn" id="btnNew" style="display:none">New workbook</button>
+  <button class="btn" id="btnPdf" style="display:none">Export audit PDF</button>
+  <button class="btn primary" id="btnBuy">Get full version $10</button>
+</div>
+
+<section id="landing">
+  <h1>See every formula in your workbook as <em>one map</em>. Find what's broken in seconds.</h1>
+  <p class="lead">Drop an Excel file. X-Ray traces every dependency across every sheet, then flags circular references, hardcoded numbers buried in formulas, broken links and inconsistent rows. Nothing leaves your computer.</p>
+  <div class="drop" id="drop">
+    <input type="file" id="file" accept=".xlsx,.xlsm,.xls" hidden>
+    <div class="big">Drop your workbook here, or click to choose</div>
+    <div class="sub">Supports <code>.xlsx</code> <code>.xlsm</code> <code>.xls</code> &nbsp;·&nbsp; Runs 100% in your browser</div>
+  </div>
+  <div class="feats">
+    <div class="feat"><b>Dependency map</b><span>Interactive graph of every formula and what it feeds. Click any cell to trace inputs and outputs.</span></div>
+    <div class="feat"><b>Circular references</b><span>Exact loops listed cell by cell, even across sheets.</span></div>
+    <div class="feat"><b>Hardcoded numbers</b><span>Numbers typed inside formulas like <code>=B4*1.17</code> that silently break models.</span></div>
+    <div class="feat"><b>Inconsistent rows</b><span>The one cell in a row that doesn't match its neighbours.</span></div>
+    <div class="feat"><b>Broken & external links</b><span>#REF! errors and references to other files.</span></div>
+    <div class="feat"><b>Audit PDF</b><span>One-page report to attach to your review or hand to a client.</span></div>
+  </div>
+  <div class="privacy"><i></i> Your file is parsed in memory in your browser and never uploaded anywhere.</div>
+</section>
+
+<section id="app">
+  <aside class="side">
+    <div class="sec"><h3>Workbook</h3><div id="wbName" style="font-weight:600;word-break:break-all"></div>
+      <div class="stats" style="margin-top:10px">
+        <div class="stat"><b id="sSheets">0</b><span>sheets</span></div>
+        <div class="stat"><b id="sFormulas">0</b><span>formulas</span></div>
+        <div class="stat"><b id="sLinks">0</b><span>dependencies</span></div>
+        <div class="stat"><b id="sDepth">0</b><span>max chain depth</span></div>
+      </div>
+    </div>
+    <div class="sec"><h3>Issues</h3><div id="issues"></div></div>
+    <div class="sec"><h3>Sheets</h3><div class="sheetlist" id="sheets"></div></div>
+    <div class="sec"><h3>Find cell</h3><input class="search" id="find" placeholder="Sheet1!C12 or C12"></div>
+  </aside>
+  <div id="graphWrap">
+    <div class="spin" id="spin">Tracing formulas…</div>
+    <svg id="graph"></svg>
+    <div class="hint">Click a cell to trace it. Scroll to zoom, drag to pan.</div>
+    <div class="toolbar"><button class="btn" id="btnFit">Fit</button><button class="btn" id="btnIssuesOnly">Issues only</button></div>
+    <div class="legend">
+      <span><i class="dot c-out"></i>Output</span><span><i class="dot c-acc"></i>Formula</span><span><i class="dot" style="background:#4b5d73"></i>Input</span><span><i class="dot c-bad"></i>Circular</span><span><i class="dot c-warn"></i>Hardcoded</span><span><i class="dot c-ref"></i>Broken</span>
+    </div>
+  </div>
+  <aside class="side right">
+    <div class="sec detail" id="detail"><h3>Cell</h3><div class="empty">Select a cell in the map or from the issues list.</div></div>
+  </aside>
+</section>
+
+<div class="modal" id="licModal">
+  <div class="card">
+    <h2>Unlock the full version</h2>
+    <p id="licMsg">Your free analysis is used. The full version is a one-time $10: unlimited workbooks, audit PDF export, and every update.</p>
+    <input id="licKey" placeholder="Paste your licence key">
+    <div class="err" id="licErr"></div>
+    <div class="row">
+      <a class="btn" id="buyLink" href="#" target="_blank" rel="noopener">Buy on Gumroad, $10</a>
+      <button class="btn" id="licCancel">Close</button>
+      <button class="btn primary" id="licOk">Activate</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============ CONFIG: fill these two after creating the Gumroad product ============ */
+const GUMROAD_PRODUCT_ID = "NuJYAnnuSlfwXYMJdc_2YA==";                       // Gumroad > product > Advanced > "Product ID" (fill in when you have it)
+const GUMROAD_PERMALINK = "bzoxf";                  // fallback for the licence check
+const GUMROAD_URL = "https://fluxelerate.gumroad.com/l/xray"; // your product page
+const FREE_USES = 1;
+/* ================================================================================== */
+
+const $ = s => document.querySelector(s);
+const toast = m => { const t=$('#toast'); t.textContent=m; t.style.display='block'; setTimeout(()=>t.style.display='none',2600); };
+const store = { get(k){try{return localStorage.getItem(k)}catch(e){return null}}, set(k,v){try{localStorage.setItem(k,v)}catch(e){}} };
+
+/* ---------- licence ---------- */
+$('#buyLink').href = GUMROAD_URL; $('#btnBuy').onclick = () => window.open(GUMROAD_URL,'_blank');
+const isPro = () => store.get('xray_lic') === '1';
+function refreshBadge(){ const b=$('#licBadge'); if(isPro()){b.textContent='Full version';b.classList.add('pro');$('#btnBuy').style.display='none';} }
+refreshBadge();
+$('#licCancel').onclick = () => $('#licModal').classList.remove('on');
+$('#licOk').onclick = async () => {
+  const key = $('#licKey').value.trim(); const err=$('#licErr'); err.textContent='';
+  if(!key){ err.textContent='Enter the key from your Gumroad receipt.'; return; }
+  $('#licOk').disabled = true;
+  try{
+    const params = GUMROAD_PRODUCT_ID ? {product_id:GUMROAD_PRODUCT_ID,license_key:key} : {product_permalink:GUMROAD_PERMALINK,license_key:key};
+    const r = await fetch('https://api.gumroad.com/v2/licenses/verify',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(params)});
+    const j = await r.json();
+    if(j.success && !j.purchase?.refunded && !j.purchase?.chargebacked){ store.set('xray_lic','1'); store.set('xray_key',key); refreshBadge(); $('#licModal').classList.remove('on'); toast('Activated. Thank you!'); }
+    else err.textContent = 'That key was not accepted.';
+  }catch(e){ err.textContent='Could not reach Gumroad. Check your connection.'; }
+  $('#licOk').disabled = false;
+};
+function gate(){
+  if(isPro()) return true;
+  const used = +(store.get('xray_uses')||0);
+  if(used < FREE_USES){ store.set('xray_uses', used+1); return true; }
+  $('#licMsg').textContent = 'Your free analysis is used. The full version is a one-time $10: unlimited workbooks, audit PDF export, and every update.';
+  $('#licModal').classList.add('on'); return false;
+}
+
+/* ---------- file input ---------- */
+const drop=$('#drop'), fileIn=$('#file');
+drop.onclick=()=>fileIn.click();
+['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
+drop.addEventListener('drop',ev=>{ const f=ev.dataTransfer.files[0]; if(f) load(f); });
+fileIn.onchange=()=>{ if(fileIn.files[0]) load(fileIn.files[0]); fileIn.value=''; };
+$('#btnNew').onclick=()=>{ $('#app').classList.remove('on'); $('#landing').style.display='block'; $('#btnNew').style.display='none'; $('#btnPdf').style.display='none'; };
+
+let M = null; // model
+async function load(file){
+  if(!gate()) return;
+  $('#landing').style.display='none'; $('#app').classList.add('on'); $('#spin').classList.add('on');
+  $('#btnNew').style.display=''; $('#btnPdf').style.display='';
+  await new Promise(r=>setTimeout(r,30));
+  try{
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf,{type:'array',cellFormula:true,cellNF:false,cellText:false});
+    M = analyze(wb, file.name);
+    renderSide(); renderGraph();
+  }catch(e){ console.error(e); toast('Could not read that file: '+(e.message||e)); $('#btnNew').click(); }
+  $('#spin').classList.remove('on');
+}
+
+/* ---------- formula parsing ---------- */
+const REF_RE = /(?:(\[[^\]]*\])?(?:'((?:[^']|'')+)'|([A-Za-z0-9_\.]+))!)?(\$?[A-Z]{1,3}\$?\d+(?::\$?[A-Z]{1,3}\$?\d+)?|\$?[A-Z]{1,3}:\$?[A-Z]{1,3}|\$?\d+:\$?\d+)(?![A-Za-z0-9_\(])/g;
+const MAX_RANGE = 400;
+
+function stripStrings(f){ return f.replace(/"(?:[^"]|"")*"/g,'""'); }
+
+function parseRefs(formula, sheet, sheetNames){
+  const out=[]; const f=stripStrings(formula);
+  let m; REF_RE.lastIndex=0;
+  while((m=REF_RE.exec(f))){
+    const ext=m[1]; const sh=(m[2]||m[3]||sheet).replace(/''/g,"'"); const ref=m[4].replace(/\$/g,'').toUpperCase();
+    if(ext){ out.push({ext:true,text:m[0]}); continue; }
+    // skip things that are actually function names like LOG10( handled by lookahead; also skip TRUE/FALSE-like tokens
+    if(!sheetNames.has(sh)){ out.push({broken:true,text:m[0],sheet:sh,ref}); continue; }
+    if(ref.includes(':')){
+      const [a,b]=ref.split(':');
+      const wholeCol=/^[A-Z]+$/.test(a), wholeRow=/^\d+$/.test(a);
+      if(wholeCol||wholeRow){ out.push({range:true,sheet:sh,ref,cells:null}); continue; }
+      const r=XLSX.utils.decode_range(ref); const n=(r.e.r-r.s.r+1)*(r.e.c-r.s.c+1);
+      if(n>MAX_RANGE){ out.push({range:true,sheet:sh,ref,cells:null}); continue; }
+      const cells=[]; for(let R=r.s.r;R<=r.e.r;R++)for(let C=r.s.c;C<=r.e.c;C++)cells.push(sh+'!'+XLSX.utils.encode_cell({r:R,c:C}));
+      out.push({range:true,sheet:sh,ref,cells});
+    } else out.push({sheet:sh,ref,cells:[sh+'!'+ref]});
+  }
+  return out;
+}
+
+function relForm(formula, addr){ // normalise formula to relative form for row-consistency check
+  const c=XLSX.utils.decode_cell(addr);
+  return stripStrings(formula).replace(/(\$?)([A-Z]{1,3})(\$?)(\d+)(?![A-Za-z0-9_\(])/g,(s,ac,col,ar,row)=>{
+    const cc=XLSX.utils.decode_col(col), rr=+row-1;
+    return (ac?'C'+cc:'C['+(cc-c.c)+']')+(ar?'R'+rr:'R['+(rr-c.r)+']');
+  });
+}
+
+function analyze(wb, name){
+  const sheetNames=new Set(wb.SheetNames);
+  const nodes=new Map(); // id -> node
+  const edges=[]; // [from,to] from = precedent, to = dependent
+  const N=(id,sheet,addr)=>{ let n=nodes.get(id); if(!n){ n={id,sheet,addr,formula:null,value:undefined,deps:new Set(),dependents:new Set(),flags:new Set()}; nodes.set(id,n);} return n; };
+  const rowForms={}; // sheet -> row -> [{addr,rel}]
+  let externalCount=0;
+
+  wb.SheetNames.forEach(sh=>{
+    const ws=wb.Sheets[sh]; if(!ws||!ws['!ref']) return;
+    Object.keys(ws).forEach(addr=>{
+      if(addr[0]==='!') return;
+      const cell=ws[addr]; if(!cell) return;
+      const id=sh+'!'+addr;
+      if(cell.f){
+        const n=N(id,sh,addr); n.formula=cell.f; n.value=cell.v;
+        if(cell.t==='e'||/#REF!/.test(cell.f)) n.flags.add('broken');
+        const refs=parseRefs(cell.f,sh,sheetNames);
+        refs.forEach(r=>{
+          if(r.ext){ n.flags.add('external'); externalCount++; return; }
+          if(r.broken){ n.flags.add('broken'); return; }
+          if(r.cells){ r.cells.forEach(cid=>{ if(cid===id) return; const [s,a]=cid.split('!'); const p=N(cid,s,a); p.dependents.add(id); n.deps.add(cid); }); }
+          else { const rid=r.sheet+'!'+r.ref; const p=N(rid,r.sheet,r.ref); p.isRange=true; p.dependents.add(id); n.deps.add(rid); }
+        });
+        // hardcoded numbers: numeric literals not 0/1, not inside sheet/cell refs
+        const lit=stripStrings(cell.f).replace(REF_RE,' ').match(/(?<![A-Za-z_\d\.])(?:\d+\.\d+|\d+)(?![\d\.A-Za-z_\(])/g)||[];
+        const hc=lit.filter(x=>x.includes('.')?!['0.5','1.0'].includes(x):!(+x<=12||['24','52','60','100','365','1000'].includes(x)));
+        if(hc.length){ n.flags.add('hardcoded'); n.hard=hc; }
+        const rc=XLSX.utils.decode_cell(addr);
+        (rowForms[sh]??={})[rc.r]??=[]; rowForms[sh][rc.r].push({addr,c:rc.c,rel:relForm(cell.f,addr),id});
+      } else if(cell.v!==undefined){
+        const n=nodes.get(id); if(n){ n.value=cell.v; }
+        else nodes.set(id,{id,sheet:sh,addr,formula:null,value:cell.v,deps:new Set(),dependents:new Set(),flags:new Set(),lazy:true});
+      }
+    });
+  });
+  // drop plain value cells no formula points to
+  for(const [id,n] of nodes){ if(!n.formula && n.dependents.size===0) nodes.delete(id); }
+  for(const n of nodes.values()) for(const d of n.deps){ if(nodes.has(d)) edges.push([d,n.id]); }
+
+  // inconsistent rows
+  Object.entries(rowForms).forEach(([sh,rows])=>Object.values(rows).forEach(list=>{
+    list.sort((a,b)=>a.c-b.c);
+    for(let i=0;i<list.length;i++){
+      const L=list[i-1], R=list[i+1], me=list[i];
+      const adjL=L&&L.c===me.c-1, adjR=R&&R.c===me.c+1;
+      if(adjL&&adjR&&L.rel===R.rel&&me.rel!==L.rel) nodes.get(me.id)?.flags.add('inconsistent');
+      else if(adjL&&!adjR&&list[i-2]&&list[i-2].c===me.c-2&&list[i-2].rel===L.rel&&me.rel!==L.rel) nodes.get(me.id)?.flags.add('inconsistent');
+      else if(adjR&&!adjL&&list[i+2]&&list[i+2].c===me.c+2&&list[i+2].rel===R.rel&&me.rel!==R.rel) nodes.get(me.id)?.flags.add('inconsistent');
+    }
+  }));
+
+  // circular refs (Tarjan SCC)
+  let idx=0; const st=[], on=new Set(), I=new Map(), low=new Map(), cycles=[];
+  const ids=[...nodes.keys()];
+  function sc(v){ I.set(v,idx);low.set(v,idx);idx++;st.push(v);on.add(v);
+    for(const w of nodes.get(v).deps){ if(!nodes.has(w)) continue; if(!I.has(w)){sc(w);low.set(v,Math.min(low.get(v),low.get(w)));} else if(on.has(w)) low.set(v,Math.min(low.get(v),I.get(w))); }
+    if(low.get(v)===I.get(v)){ const comp=[]; let w; do{w=st.pop();on.delete(w);comp.push(w);}while(w!==v); if(comp.length>1){cycles.push(comp);comp.forEach(c=>nodes.get(c).flags.add('circular'));} }
+  }
+  try{ ids.forEach(v=>{ if(!I.has(v)) sc(v); }); }catch(e){ /* very deep graphs: skip */ }
+
+  // depth (longest chain) & outputs
+  const depth=new Map(); const visiting=new Set();
+  function dp(v){ if(depth.has(v)) return depth.get(v); if(visiting.has(v)) return 0; visiting.add(v); let d=0; const n=nodes.get(v); if(n&&n.formula){ for(const w of n.deps){ if(nodes.has(w)) d=Math.max(d,dp(w)+1);} } visiting.delete(v); depth.set(v,d); return d; }
+  let maxDepth=0; for(const id of ids){ maxDepth=Math.max(maxDepth,dp(id)); }
+  for(const n of nodes.values()){ n.depth=depth.get(n.id)||0; if(n.formula&&n.dependents.size===0&&n.depth>=1) n.flags.add('output'); }
+
+  const sheets=wb.SheetNames.map((s,i)=>({name:s,count:[...nodes.values()].filter(n=>n.sheet===s).length}));
+  const issues={
+    circular:{label:'Circular references',cls:'bad',items:cycles.flat()},
+    broken:{label:'Broken references (#REF!)',cls:'ref',items:ids.filter(i=>nodes.get(i).flags.has('broken'))},
+    hardcoded:{label:'Hardcoded numbers in formulas',cls:'warn',items:ids.filter(i=>nodes.get(i).flags.has('hardcoded'))},
+    inconsistent:{label:'Inconsistent formulas in a row',cls:'warn',items:ids.filter(i=>nodes.get(i).flags.has('inconsistent'))},
+    external:{label:'Links to other files',cls:'acc',items:ids.filter(i=>nodes.get(i).flags.has('external'))},
+    output:{label:'Key outputs (nothing depends on them)',cls:'out',items:ids.filter(i=>nodes.get(i).flags.has('output')).sort((a,b)=>nodes.get(b).depth-nodes.get(a).depth)},
+  };
+  const formulaCount=[...nodes.values()].filter(n=>n.formula).length;
+  return {name,wb,nodes,edges,sheets,issues,cycles,formulaCount,maxDepth};
+}
+
+/* ---------- side panels ---------- */
+const palette=['#5B9CFF','#3DDC97','#FFB454','#C084FC','#FF7AB6','#4DD0E1','#FFD166','#A3E635','#F97316','#38BDF8'];
+const sheetColor={};
+function renderSide(){
+  $('#wbName').textContent=M.name;
+  $('#sSheets').textContent=M.sheets.length; $('#sFormulas').textContent=M.formulaCount.toLocaleString();
+  $('#sLinks').textContent=M.edges.length.toLocaleString(); $('#sDepth').textContent=M.maxDepth;
+  M.sheets.forEach((s,i)=>sheetColor[s.name]=palette[i%palette.length]);
+  $('#sheets').innerHTML=M.sheets.map(s=>`<label><input type="checkbox" checked data-sheet="${esc(s.name)}"><i class="sw" style="background:${sheetColor[s.name]}"></i>${esc(s.name)}<span class="cnt">${s.count}</span></label>`).join('');
+  $('#sheets').querySelectorAll('input').forEach(cb=>cb.onchange=applySheetFilter);
+  $('#issues').innerHTML=Object.entries(M.issues).map(([k,v])=>`<div class="issue" data-k="${k}"><span><i class="dot c-${v.cls}"></i>${v.label}</span><span class="n" style="color:${v.items.length&&k!=='output'?'var(--'+v.cls+')':'var(--muted)'}">${v.items.length}</span></div>`).join('');
+  $('#issues').querySelectorAll('.issue').forEach(el=>el.onclick=()=>showIssue(el.dataset.k,el));
+}
+function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function showIssue(k,el){
+  $('#issues').querySelectorAll('.issue').forEach(e=>e.classList.remove('active')); el?.classList.add('active');
+  const v=M.issues[k]; const d=$('#detail');
+  let body='';
+  if(k==='circular'&&M.cycles.length) body=M.cycles.map((c,i)=>`<div style="margin:8px 0"><b style="font-size:12px">Loop ${i+1}</b><ul class="reflist">${c.map(id=>`<li data-id="${esc(id)}">${esc(id)}</li>`).join('')}</ul></div>`).join('');
+  else body=v.items.length?`<ul class="reflist" style="max-height:60vh">${v.items.map(id=>`<li data-id="${esc(id)}">${esc(id)}${M.nodes.get(id).hard?` <span style="color:var(--warn)">${esc(M.nodes.get(id).hard.join(', '))}</span>`:''}</li>`).join('')}</ul>`:'<div class="empty">None found. Good sign.</div>';
+  d.innerHTML=`<h3>${esc(v.label)}</h3>${body}`;
+  d.querySelectorAll('li').forEach(li=>li.onclick=()=>focusNode(li.dataset.id));
+  highlightSet(new Set(v.items));
+}
+function showCell(id){
+  const n=M.nodes.get(id); if(!n) return; const d=$('#detail');
+  const tags=[...n.flags].map(f=>`<span class="tag ${({circular:'bad',broken:'ref',hardcoded:'warn',inconsistent:'warn',external:'acc',output:'out'})[f]}">${f}</span>`).join('');
+  const val=n.value===undefined?'':(typeof n.value==='number'?n.value.toLocaleString(undefined,{maximumFractionDigits:6}):String(n.value));
+  d.innerHTML=`<h3>Cell</h3><div class="addr">${esc(id)}</div><div style="margin:6px 0">${tags}</div>
+   ${n.formula?`<div class="f">=${esc(n.formula)}</div>`:`<div class="f" style="color:var(--muted)">${n.isRange?'range input':'input value'}</div>`}
+   <div class="val">Value: <b style="color:var(--ink)">${esc(val)||'—'}</b> &nbsp;·&nbsp; Chain depth ${n.depth||0}</div>
+   ${n.hard?`<div class="val" style="margin-top:6px">Hardcoded: <span style="color:var(--warn)">${esc(n.hard.join(', '))}</span></div>`:''}
+   <h3 style="margin-top:14px">Feeds from (${n.deps.size})</h3>${n.deps.size?`<ul class="reflist">${[...n.deps].map(x=>`<li data-id="${esc(x)}">${esc(x)}</li>`).join('')}</ul>`:'<div class="empty">No inputs</div>'}
+   <h3 style="margin-top:14px">Feeds into (${n.dependents.size})</h3>${n.dependents.size?`<ul class="reflist">${[...n.dependents].map(x=>`<li data-id="${esc(x)}">${esc(x)}</li>`).join('')}</ul>`:'<div class="empty">Nothing. This is an output.</div>'}`;
+  d.querySelectorAll('li').forEach(li=>li.onclick=()=>focusNode(li.dataset.id));
+}
+
+/* ---------- graph ---------- */
+let sim, gNode, gLink, zoomBehavior, svg, g, visible=new Set(), issuesOnly=false;
+function nodeColor(n){ if(n.flags.has('circular'))return'#FF5C6C'; if(n.flags.has('broken'))return'#C084FC'; if(n.flags.has('hardcoded')||n.flags.has('inconsistent'))return'#FFB454'; if(n.flags.has('output'))return'#3DDC97'; if(n.formula)return sheetColor[n.sheet]||'#5B9CFF'; return'#4b5d73'; }
+function renderGraph(){
+  svg=d3.select('#graph'); svg.selectAll('*').remove();
+  const W=$('#graphWrap').clientWidth,H=$('#graphWrap').clientHeight;
+  svg.attr('viewBox',[0,0,W,H]);
+  svg.append('defs').append('marker').attr('id','arrow').attr('viewBox','0 -4 8 8').attr('refX',14).attr('markerWidth',6).attr('markerHeight',6).attr('orient','auto').append('path').attr('d','M0,-4L8,0L0,4').attr('fill','#34455a');
+  g=svg.append('g');
+  zoomBehavior=d3.zoom().scaleExtent([0.05,6]).on('zoom',e=>g.attr('transform',e.transform)); svg.call(zoomBehavior);
+  const nodes=[...M.nodes.values()]; const idx=new Map(nodes.map(n=>[n.id,n]));
+  const links=M.edges.filter(([a,b])=>idx.has(a)&&idx.has(b)).map(([a,b])=>({source:a,target:b}));
+  const big=nodes.length>1500;
+  gLink=g.append('g').selectAll('path').data(links).join('path').attr('class','link').attr('marker-end',big?null:'url(#arrow)');
+  gNode=g.append('g').selectAll('g').data(nodes,d=>d.id).join('g').attr('class','node').call(d3.drag().on('start',(e,d)=>{if(!e.active)sim.alphaTarget(.3).restart();d.fx=d.x;d.fy=d.y}).on('drag',(e,d)=>{d.fx=e.x;d.fy=e.y}).on('end',(e,d)=>{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null}));
+  gNode.append('circle').attr('r',d=>d.isRange?4:Math.min(14,4+Math.sqrt(d.dependents.size)*2)).attr('fill',nodeColor);
+  if(!big) gNode.append('text').attr('dx',9).attr('dy',3).text(d=>d.addr+(M.sheets.length>1?' · '+d.sheet:''));
+  gNode.on('click',(e,d)=>{ e.stopPropagation(); focusNode(d.id); });
+  svg.on('click',()=>{ clearHighlight(); });
+  sim=d3.forceSimulation(nodes).force('link',d3.forceLink(links).id(d=>d.id).distance(big?30:55).strength(.6)).force('charge',d3.forceManyBody().strength(big?-40:-160)).force('center',d3.forceCenter(W/2,H/2)).force('collide',d3.forceCollide(big?6:16)).force('x',d3.forceX(d=>W/2+(d.depth||0)*40).strength(.05));
+  sim.on('tick',()=>{ gLink.attr('d',d=>`M${d.source.x},${d.source.y}L${d.target.x},${d.target.y}`); gNode.attr('transform',d=>`translate(${d.x},${d.y})`); });
+  setTimeout(fit,900);
+  applySheetFilter();
+}
+function fit(){ const b=g.node().getBBox(); if(!b.width) return; const W=$('#graphWrap').clientWidth,H=$('#graphWrap').clientHeight; const s=Math.min(W/(b.width+80),H/(b.height+80),2); svg.transition().duration(500).call(zoomBehavior.transform,d3.zoomIdentity.translate(W/2-s*(b.x+b.width/2),H/2-s*(b.y+b.height/2)).scale(s)); }
+$('#btnFit').onclick=fit;
+$('#btnIssuesOnly').onclick=()=>{ issuesOnly=!issuesOnly; $('#btnIssuesOnly').classList.toggle('primary',issuesOnly); applySheetFilter(); };
+function applySheetFilter(){
+  const on=new Set([...$('#sheets').querySelectorAll('input:checked')].map(i=>i.dataset.sheet));
+  const bad=n=>['circular','broken','hardcoded','inconsistent','external'].some(f=>n.flags.has(f));
+  const show=n=>on.has(n.sheet)&&(!issuesOnly||bad(n)||[...n.dependents].some(d=>M.nodes.get(d)&&bad(M.nodes.get(d))));
+  gNode.style('display',d=>show(d)?null:'none');
+  gLink.style('display',d=>show(d.source)&&show(d.target)?null:'none');
+}
+function clearHighlight(){ gNode.classed('dim',false); gLink.classed('dim',false).classed('hi',false).classed('hi-up',false); }
+function highlightSet(set){ if(!gNode) return; if(!set.size){clearHighlight();return;} gNode.classed('dim',d=>!set.has(d.id)); gLink.classed('dim',true).classed('hi',false).classed('hi-up',false); }
+function focusNode(id){
+  const n=M.nodes.get(id); if(!n) return; showCell(id);
+  const up=new Set(), down=new Set();
+  const walk=(start,dir,acc)=>{ const q=[start]; while(q.length){ const v=q.pop(); const nn=M.nodes.get(v); if(!nn) continue; for(const w of (dir==='up'?nn.deps:nn.dependents)){ if(!acc.has(w)&&M.nodes.has(w)){acc.add(w); if(acc.size<400) q.push(w);} } } };
+  walk(id,'up',up); walk(id,'down',down);
+  const all=new Set([id,...up,...down]);
+  gNode.classed('dim',d=>!all.has(d.id));
+  gLink.classed('dim',d=>!(all.has(d.source.id)&&all.has(d.target.id))).classed('hi-up',d=>all.has(d.target.id)&&up.has(d.source.id)||(d.target.id===id)).classed('hi',d=>down.has(d.target.id)&&(d.source.id===id||down.has(d.source.id)));
+  const d=gNode.data().find(x=>x.id===id); if(d&&d.x!==undefined){ const W=$('#graphWrap').clientWidth,H=$('#graphWrap').clientHeight; const t=d3.zoomTransform(svg.node()); const s=Math.max(t.k,1.2); svg.transition().duration(450).call(zoomBehavior.transform,d3.zoomIdentity.translate(W/2-s*d.x,H/2-s*d.y).scale(s)); }
+}
+$('#find').addEventListener('keydown',e=>{ if(e.key!=='Enter') return; let q=$('#find').value.trim().toUpperCase().replace(/\$/g,''); if(!q) return; if(!q.includes('!')){ const hit=[...M.nodes.keys()].find(k=>k.toUpperCase().endsWith('!'+q)); if(hit) q=hit; else { toast('Cell not found in the formula map'); return; } } const hit=[...M.nodes.keys()].find(k=>k.toUpperCase()===q); if(hit) focusNode(hit); else toast('Cell not found in the formula map'); });
+
+/* ---------- PDF ---------- */
+$('#btnPdf').onclick=()=>{
+  if(!isPro()){ $('#licMsg').textContent='The audit PDF is part of the full version ($10, one time).'; $('#licModal').classList.add('on'); return; }
+  const {jsPDF}=window.jspdf; const doc=new jsPDF({unit:'pt',format:'a4'}); const Wp=595, m=44; let y=m;
+  const line=(t,size=10,bold=false,color=[30,36,44])=>{ doc.setFont('helvetica',bold?'bold':'normal'); doc.setFontSize(size); doc.setTextColor(...color); const lines=doc.splitTextToSize(t,Wp-2*m); lines.forEach(l=>{ if(y>800){doc.addPage();y=m;} doc.text(l,m,y); y+=size*1.35; }); };
+  line('Excel Formula X-Ray · Audit report',18,true); line(M.name+'  ·  '+new Date().toLocaleString(),9,false,[110,120,135]); y+=8;
+  line(`Sheets ${M.sheets.length}   Formulas ${M.formulaCount}   Dependencies ${M.edges.length}   Max chain depth ${M.maxDepth}`,10,true); y+=10;
+  const score=Math.max(0,100-M.issues.circular.items.length*15-M.issues.broken.items.length*8-M.issues.inconsistent.items.length*3-Math.min(30,M.issues.hardcoded.items.length));
+  line(`Model health score: ${score}/100`,13,true,score>80?[22,140,90]:score>50?[200,130,20]:[200,50,60]); y+=8;
+  Object.entries(M.issues).forEach(([k,v])=>{ y+=6; line(`${v.label}: ${v.items.length}`,11,true); if(k==='circular'&&M.cycles.length) M.cycles.forEach((c,i)=>line(`Loop ${i+1}: ${c.join(' → ')}`,9)); else v.items.slice(0,40).forEach(id=>{ const n=M.nodes.get(id); line(`${id}${n.formula?'   ='+n.formula.slice(0,90):''}${n.hard?'   ['+n.hard.join(', ')+']':''}`,9); }); if(v.items.length>40) line(`… and ${v.items.length-40} more`,9,false,[110,120,135]); });
+  y+=14; line('Generated locally in the browser by Excel Formula X-Ray (fluxelerate.com). No file data was uploaded.',8,false,[110,120,135]);
+  doc.save(M.name.replace(/\.[^.]+$/,'')+'_xray_audit.pdf');
+};
+</script>
+</body>
+</html>
