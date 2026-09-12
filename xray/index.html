@@ -162,6 +162,46 @@
   <div class="privacy"><i></i> Your file is parsed in memory in your browser and never uploaded anywhere.</div>
 </section>
 
+
+<style>
+.guide{max-width:820px;margin:0 auto;padding:40px 22px 80px;color:var(--ink);font-size:15px;line-height:1.7}
+.guide h2{font-size:26px;letter-spacing:-.02em;margin:34px 0 12px}
+.guide h3{font-size:18px;margin:26px 0 8px;color:var(--accent)}
+.guide p{color:var(--muted);margin:0 0 14px}
+.guide ol,.guide ul{color:var(--muted);margin:0 0 14px 22px}
+.guide li{margin:6px 0}
+.guide code{font-family:var(--mono);background:var(--panel2);padding:2px 6px;border-radius:5px;font-size:13px;color:var(--ink)}
+.guide .cta{display:inline-block;margin-top:14px;background:var(--accent);color:#06110C;padding:10px 16px;border-radius:8px;font-weight:600;text-decoration:none}
+.guide .note{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:14px 16px;color:var(--muted);font-size:14px}
+</style>
+<section class="guide" id="guide">
+<h2>How to find circular references in Excel</h2>
+<p>A circular reference is a formula that, directly or through a chain of other cells, ends up depending on itself. Excel warns you once when the file opens, most people click OK, and from then on the model quietly returns zeros or stale numbers. In financial models the classic loop is interest expense: interest depends on the closing cash balance, closing cash depends on net income, net income depends on interest.</p>
+<h3>The built-in way</h3>
+<ol>
+<li>Go to the <code>Formulas</code> tab, click <code>Error Checking</code>, then <code>Circular References</code>. Excel shows the address of one cell in the loop.</li>
+<li>Click <code>Trace Precedents</code> on that cell and follow the arrows until they come back to the start.</li>
+<li>Repeat for every sheet, because Excel only lists one loop at a time and only for the active workbook state.</li>
+</ol>
+<p>That works for a small sheet. On a 20-sheet model with a loop that crosses four tabs, the arrows become unreadable and you still only see one loop at a time.</p>
+<h3>The faster way</h3>
+<p>Drop the workbook into the X-Ray tool at the top of this page. It reads every formula on every sheet, builds the full dependency graph, and lists each loop as a complete chain such as <code>Model!F14 -&gt; Model!F20 -&gt; Model!F14</code>. Nothing is uploaded; the file is parsed in your browser and never leaves your computer.</p>
+<h3>How to fix a circular reference</h3>
+<ul>
+<li><b>Use opening balances.</b> Calculate interest on the opening debt balance instead of the closing one. This is the standard fix in bank and private equity models and removes the loop entirely.</li>
+<li><b>Add a circuit breaker.</b> Put a 1 or 0 in an input cell and wrap the looping formula in <code>=IF(Inputs!$B$2=1, original, 0)</code>. When the model blows up, flip the switch to 0, let it settle, flip it back.</li>
+<li><b>Iterative calculation is the last resort.</b> <code>File &gt; Options &gt; Formulas &gt; Enable iterative calculation</code> makes the warning go away but hides every future accidental loop too. Most reviewers will reject a model that depends on it.</li>
+</ul>
+<h2>Hardcoded numbers inside formulas</h2>
+<p>A formula like <code>=C22*(1-0.21)</code> has the tax rate baked in. Nobody can find it, nobody can change it, and when the rate moves the model is wrong with no visible sign. The rule in every modeling standard is the same: assumptions live in labelled input cells, formulas only reference them. X-Ray lists every numeric literal it finds inside a formula, ignoring structural constants like 12, 100 and 365, so you can move each one to an input cell.</p>
+<h2>Inconsistent formulas across a row</h2>
+<p>In a time series, every period in a row should use the same formula. When someone types over one cell to force a number, or drags a formula that points at the wrong row, that one cell is now different from its neighbours. Excel does not flag it. X-Ray compares each formula in relative form with the cells to its left and right and flags the odd one out.</p>
+<h2>#REF! and broken links</h2>
+<p><code>#REF!</code> appears when a row, column or sheet that a formula relied on was deleted. A reference to a sheet name that no longer exists is worse, because Excel may keep showing the last cached value. Both are listed with the cell address and the formula so you can repair the reference or replace it with the value the model owner confirms.</p>
+<div class="note">Reviewing models for clients or auditing your own before delivery? The same engine is available as a Claude Code skill that runs the audit locally, returns a health score and offers to fix each finding. <a href="https://fluxelerate.gumroad.com/l/model-audit">Excel Model Audit for Claude Code</a>.</div>
+<a class="cta" href="#landing">Audit a workbook now, free</a>
+</section>
+
 <section id="app">
   <aside class="side">
     <div class="sec"><h3>Workbook</h3><div id="wbName" style="font-weight:600;word-break:break-all"></div>
@@ -251,12 +291,12 @@ drop.onclick=()=>fileIn.click();
 ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
 drop.addEventListener('drop',ev=>{ const f=ev.dataTransfer.files[0]; if(f) load(f); });
 fileIn.onchange=()=>{ if(fileIn.files[0]) load(fileIn.files[0]); fileIn.value=''; };
-$('#btnNew').onclick=()=>{ $('#app').classList.remove('on'); $('#landing').style.display='block'; $('#btnNew').style.display='none'; $('#btnPdf').style.display='none'; };
+$('#btnNew').onclick=()=>{ $('#app').classList.remove('on'); $('#landing').style.display='block'; $('#guide').style.display='block'; $('#btnNew').style.display='none'; $('#btnPdf').style.display='none'; };
 
 let M = null; // model
 async function load(file){
   if(!gate()) return;
-  $('#landing').style.display='none'; $('#app').classList.add('on'); $('#spin').classList.add('on');
+  $('#landing').style.display='none'; $('#guide').style.display='none'; $('#app').classList.add('on'); $('#spin').classList.add('on');
   $('#btnNew').style.display=''; $('#btnPdf').style.display='';
   await new Promise(r=>setTimeout(r,30));
   try{
