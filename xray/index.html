@@ -98,6 +98,12 @@
   .detail .addr{font-family:var(--mono);font-size:18px;font-weight:600;color:var(--accent)}
   .detail .f{font-family:var(--mono);font-size:12px;background:#0b1118;border:1px solid var(--line);border-radius:8px;padding:10px;margin:10px 0;white-space:pre-wrap;word-break:break-all;color:#d7e3f0}
   .detail .val{font-size:12px;color:var(--muted)}
+  .detail .fixbox{border:1px solid rgba(255,180,84,.45);background:rgba(255,180,84,.07);border-radius:8px;padding:10px 12px;margin:10px 0}
+  .detail .fx-h{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--warn)}
+  .detail .fx-t{font-size:13px;line-height:1.5;color:var(--ink);margin-top:4px}
+  .detail .fx-row{display:flex;gap:8px;align-items:center;margin-top:6px}
+  .detail .fx-row code{flex:1;font-family:var(--mono);font-size:13px;background:#0b1118;border:1px solid var(--line);border-radius:6px;padding:7px 9px;color:var(--ok,#3DDC97);word-break:break-all}
+  .detail .fx-copy{font:inherit;font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);cursor:pointer}
   .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;margin:2px 4px 2px 0;border:1px solid}
   .tag.bad{color:var(--bad);border-color:rgba(255,92,108,.4)}.tag.warn{color:var(--warn);border-color:rgba(255,180,84,.4)}.tag.ref{color:var(--ref);border-color:rgba(192,132,252,.4)}.tag.out{color:var(--accent);border-color:rgba(61,220,151,.4)}.tag.acc{color:var(--accent2);border-color:rgba(91,156,255,.4)}
   .reflist{list-style:none;max-height:180px;overflow:auto}
@@ -343,6 +349,26 @@ function relForm(formula, addr){ // normalise formula to relative form for row-c
   });
 }
 
+function fromRel(rel, addr){ // rebuild an A1 formula for this cell from a relative-form pattern
+  const c=XLSX.utils.decode_cell(addr);
+  return rel.replace(/C(\[-?\d+\]|\d+)R(\[-?\d+\]|\d+)/g,(s,cc,rr)=>{
+    const ca=cc[0]!=='[', ra=rr[0]!=='[';
+    const col=ca?+cc:c.c+(+cc.slice(1,-1)), row=ra?+rr:c.r+(+rr.slice(1,-1));
+    if(col<0||row<0) return '#REF!';
+    return (ca?'$':'')+XLSX.utils.encode_col(col)+(ra?'$':'')+(row+1);
+  });
+}
+function explain(n, ref, dir, nodes){ // attach what's wrong + suggested fix to a flagged cell
+  if(!n||n.why) return;
+  const nb=nodes.get(ref.id), nf=nb&&nb.formula; if(!nf) return;
+  const where=dir==='col'?'column':'row';
+  const clean=!/"/.test(nf);
+  n.fix = clean ? '='+fromRel(ref.rel, n.addr) : null;
+  n.why = n.formula
+    ? `The other cells in this ${where} follow the same pattern as ${ref.addr} (=${nf}). This cell uses a different formula.`
+    : `The cells around it in this ${where} are formulas like ${ref.addr} (=${nf}), but this cell is a typed number. It will not update when the inputs change.`;
+}
+
 function analyze(wb, name){
   const sheetNames=new Set(wb.SheetNames);
   const nodes=new Map(); // id -> node
@@ -393,8 +419,9 @@ function analyze(wb, name){
     const at=(r,c)=>r<0||c<0?undefined:R[XLSX.utils.encode_cell({r,c})];
     const u=at(rc.r-1,rc.c), d=at(rc.r+1,rc.c), l=at(rc.r,rc.c-1), rr=at(rc.r,rc.c+1);
     if((u&&u===d)||(l&&l===rr)){
+      const col=u&&u===d, nr=col?XLSX.utils.encode_cell({r:rc.r-1,c:rc.c}):XLSX.utils.encode_cell({r:rc.r,c:rc.c-1});
       let n=nodes.get(k.id); if(!n){ n={id:k.id,sheet:k.sh,addr:k.addr,formula:null,value:k.v,deps:new Set(),dependents:new Set(),flags:new Set()}; nodes.set(k.id,n); }
-      n.flags.add('typed');
+      n.flags.add('typed'); k.ref={addr:nr,id:k.sh+'!'+nr,rel:col?u:l}; k.dir=col?'col':'row'; k.node=n;
     }
   });
   // drop plain value cells no formula points to
@@ -407,9 +434,9 @@ function analyze(wb, name){
     for(let i=0;i<list.length;i++){
       const L=list[i-1], R=list[i+1], me=list[i];
       const adjL=L&&L.c===me.c-1, adjR=R&&R.c===me.c+1;
-      if(adjL&&adjR&&L.rel===R.rel&&me.rel!==L.rel) nodes.get(me.id)?.flags.add('inconsistent');
-      else if(adjL&&!adjR&&list[i-2]&&list[i-2].c===me.c-2&&list[i-2].rel===L.rel&&me.rel!==L.rel) nodes.get(me.id)?.flags.add('inconsistent');
-      else if(adjR&&!adjL&&list[i+2]&&list[i+2].c===me.c+2&&list[i+2].rel===R.rel&&me.rel!==R.rel) nodes.get(me.id)?.flags.add('inconsistent');
+      if(adjL&&adjR&&L.rel===R.rel&&me.rel!==L.rel){ nodes.get(me.id)?.flags.add('inconsistent'); explain(nodes.get(me.id),L,'row',nodes); }
+      else if(adjL&&!adjR&&list[i-2]&&list[i-2].c===me.c-2&&list[i-2].rel===L.rel&&me.rel!==L.rel){ nodes.get(me.id)?.flags.add('inconsistent'); explain(nodes.get(me.id),L,'row',nodes); }
+      else if(adjR&&!adjL&&list[i+2]&&list[i+2].c===me.c+2&&list[i+2].rel===R.rel&&me.rel!==R.rel){ nodes.get(me.id)?.flags.add('inconsistent'); explain(nodes.get(me.id),R,'row',nodes); }
     }
   }));
 
@@ -419,11 +446,15 @@ function analyze(wb, name){
     for(let i=0;i<list.length;i++){
       const U=list[i-1], D=list[i+1], me=list[i];
       const adjU=U&&U.r===me.r-1, adjD=D&&D.r===me.r+1;
-      if(adjU&&adjD&&U.rel===D.rel&&me.rel!==U.rel) nodes.get(me.id)?.flags.add('inconsistent');
-      else if(!me.agg&&adjU&&!adjD&&list[i-2]&&list[i-2].r===me.r-2&&list[i-2].rel===U.rel&&me.rel!==U.rel) nodes.get(me.id)?.flags.add('inconsistent');
-      else if(!me.agg&&adjD&&!adjU&&list[i+2]&&list[i+2].r===me.r+2&&list[i+2].rel===D.rel&&me.rel!==D.rel) nodes.get(me.id)?.flags.add('inconsistent');
+      if(adjU&&adjD&&U.rel===D.rel&&me.rel!==U.rel){ nodes.get(me.id)?.flags.add('inconsistent'); explain(nodes.get(me.id),U,'col',nodes); }
+      else if(!me.agg&&adjU&&!adjD&&list[i-2]&&list[i-2].r===me.r-2&&list[i-2].rel===U.rel&&me.rel!==U.rel){ nodes.get(me.id)?.flags.add('inconsistent'); explain(nodes.get(me.id),U,'col',nodes); }
+      else if(!me.agg&&adjD&&!adjU&&list[i+2]&&list[i+2].r===me.r+2&&list[i+2].rel===D.rel&&me.rel!==D.rel){ nodes.get(me.id)?.flags.add('inconsistent'); explain(nodes.get(me.id),D,'col',nodes); }
     }
   }));
+
+  consts.forEach(k=>{ if(k.node) explain(k.node,k.ref,k.dir,nodes); });
+  // hardcoded-only cells: advise moving the number to an input cell
+  for(const n of nodes.values()) if(n.hard&&!n.why){ n.why=`The number ${n.hard.join(', ')} is typed inside this formula. When it changes, nobody will know to update it here.`; n.fix=null; n.tip=`Put ${n.hard[0]} in its own labelled input cell and point this formula at that cell.`; }
 
   // circular refs (Tarjan SCC)
   let idx=0; const st=[], on=new Set(), I=new Map(), low=new Map(), cycles=[];
@@ -485,10 +516,12 @@ function showCell(id){
   d.innerHTML=`<h3>Cell</h3><div class="addr">${esc(id)}</div><div style="margin:6px 0">${tags}</div>
    ${n.formula?`<div class="f">=${esc(n.formula)}</div>`:`<div class="f" style="color:var(--muted)">${n.isRange?'range input':'input value'}</div>`}
    <div class="val">Value: <b style="color:var(--ink)">${esc(val)||'—'}</b> &nbsp;·&nbsp; Chain depth ${n.depth||0}</div>
+   ${n.why?`<div class="fixbox"><div class="fx-h">What's wrong</div><div class="fx-t">${esc(n.why)}${n.hard&&n.fix?` It also has ${esc(n.hard.join(', '))} typed inside it.`:''}</div>${n.fix?`<div class="fx-h" style="margin-top:10px">Fix: change it to</div><div class="fx-row"><code>${esc(n.fix)}</code><button class="fx-copy" data-fix="${esc(n.fix)}">Copy</button></div>`:''}${n.tip?`<div class="fx-h" style="margin-top:10px">Fix</div><div class="fx-t">${esc(n.tip)}</div>`:''}</div>`:''}
    ${n.hard?`<div class="val" style="margin-top:6px">Hardcoded: <span style="color:var(--warn)">${esc(n.hard.join(', '))}</span></div>`:''}
    <h3 style="margin-top:14px">Feeds from (${n.deps.size})</h3>${n.deps.size?`<ul class="reflist">${[...n.deps].map(x=>`<li data-id="${esc(x)}">${esc(x)}</li>`).join('')}</ul>`:'<div class="empty">No inputs</div>'}
    <h3 style="margin-top:14px">Feeds into (${n.dependents.size})</h3>${n.dependents.size?`<ul class="reflist">${[...n.dependents].map(x=>`<li data-id="${esc(x)}">${esc(x)}</li>`).join('')}</ul>`:'<div class="empty">Nothing. This is an output.</div>'}`;
   d.querySelectorAll('li').forEach(li=>li.onclick=()=>focusNode(li.dataset.id));
+  d.querySelectorAll('.fx-copy').forEach(b=>b.onclick=()=>{ navigator.clipboard?.writeText(b.dataset.fix).then(()=>{b.textContent='Copied';setTimeout(()=>b.textContent='Copy',1500);}).catch(()=>{}); });
 }
 
 /* ---------- graph ---------- */
@@ -548,7 +581,7 @@ $('#btnPdf').onclick=()=>{
   line(`Sheets ${M.sheets.length}   Formulas ${M.formulaCount}   Dependencies ${M.edges.length}   Max chain depth ${M.maxDepth}`,10,true); y+=10;
   const score=Math.max(0,100-M.issues.circular.items.length*15-M.issues.broken.items.length*8-M.issues.inconsistent.items.length*3-M.issues.typed.items.length*3-Math.min(30,M.issues.hardcoded.items.length));
   line(`Model health score: ${score}/100`,13,true,score>80?[22,140,90]:score>50?[200,130,20]:[200,50,60]); y+=8;
-  Object.entries(M.issues).forEach(([k,v])=>{ y+=6; line(`${v.label}: ${v.items.length}`,11,true); if(k==='circular'&&M.cycles.length) M.cycles.forEach((c,i)=>line(`Loop ${i+1}: ${c.join(' → ')}`,9)); else v.items.slice(0,40).forEach(id=>{ const n=M.nodes.get(id); line(`${id}${n.formula?'   ='+n.formula.slice(0,90):''}${n.hard?'   ['+n.hard.join(', ')+']':''}`,9); }); if(v.items.length>40) line(`… and ${v.items.length-40} more`,9,false,[110,120,135]); });
+  Object.entries(M.issues).forEach(([k,v])=>{ y+=6; line(`${v.label}: ${v.items.length}`,11,true); if(k==='circular'&&M.cycles.length) M.cycles.forEach((c,i)=>line(`Loop ${i+1}: ${c.join(' → ')}`,9)); else v.items.slice(0,40).forEach(id=>{ const n=M.nodes.get(id); line(`${id}${n.formula?'   ='+n.formula.slice(0,90):'   typed value '+n.value}${n.hard?'   ['+n.hard.join(', ')+']':''}`,9); if(n.fix) line(`      Fix: ${n.fix}`,9,false,[22,140,90]); else if(n.tip) line(`      Fix: ${n.tip}`,9,false,[22,140,90]); }); if(v.items.length>40) line(`… and ${v.items.length-40} more`,9,false,[110,120,135]); });
   y+=14; line('Generated locally in the browser by Excel Formula X-Ray (fluxelerate.com). No file data was uploaded.',8,false,[110,120,135]);
   doc.save(M.name.replace(/\.[^.]+$/,'')+'_xray_audit.pdf');
 };
