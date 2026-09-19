@@ -140,12 +140,12 @@
   <span class="badge" id="licBadge">Free preview</span>
   <button class="btn" id="btnNew" style="display:none">New workbook</button>
   <button class="btn" id="btnPdf" style="display:none">Export audit PDF</button>
-  <button class="btn primary" id="btnBuy">Get full version $10</button>
+  <button class="btn primary" id="btnBuy">Get full version $20</button>
 </div>
 
 <section id="landing">
   <h1>See every formula in your workbook as <em>one map</em>. Find what's broken in seconds.</h1>
-  <p class="lead">Drop an Excel file. X-Ray traces every dependency across every sheet, then flags circular references, hardcoded numbers buried in formulas, broken links and inconsistent rows. Nothing leaves your computer.</p>
+  <p class="lead">Drop an Excel file. X-Ray traces every dependency across every sheet, then flags circular references, hardcoded numbers buried in formulas, broken links, inconsistent formulas and numbers typed over formulas. Nothing leaves your computer.</p>
   <div class="drop" id="drop">
     <input type="file" id="file" accept=".xlsx,.xlsm,.xls" hidden>
     <div class="big">Drop your workbook here, or click to choose</div>
@@ -155,7 +155,7 @@
     <div class="feat"><b>Dependency map</b><span>Interactive graph of every formula and what it feeds. Click any cell to trace inputs and outputs.</span></div>
     <div class="feat"><b>Circular references</b><span>Exact loops listed cell by cell, even across sheets.</span></div>
     <div class="feat"><b>Hardcoded numbers</b><span>Numbers typed inside formulas like <code>=B4*1.17</code> that silently break models.</span></div>
-    <div class="feat"><b>Inconsistent rows</b><span>The one cell in a row that doesn't match its neighbours.</span></div>
+    <div class="feat"><b>Inconsistent formulas</b><span>The one cell in a row or column that doesn't match its neighbours, plus numbers typed over formulas.</span></div>
     <div class="feat"><b>Broken & external links</b><span>#REF! errors and references to other files.</span></div>
     <div class="feat"><b>Audit PDF</b><span>One-page report to attach to your review or hand to a client.</span></div>
   </div>
@@ -233,11 +233,11 @@
 <div class="modal" id="licModal">
   <div class="card">
     <h2>Unlock the full version</h2>
-    <p id="licMsg">Your free analysis is used. The full version is a one-time $10: unlimited workbooks, audit PDF export, and every update.</p>
+    <p id="licMsg">Your free analysis is used. The full version is a one-time $20: unlimited workbooks, audit PDF export, and every update.</p>
     <input id="licKey" placeholder="Paste your licence key">
     <div class="err" id="licErr"></div>
     <div class="row">
-      <a class="btn" id="buyLink" href="#" target="_blank" rel="noopener">Buy on Gumroad, $10</a>
+      <a class="btn" id="buyLink" href="#" target="_blank" rel="noopener">Buy on Gumroad, $20</a>
       <button class="btn" id="licCancel">Close</button>
       <button class="btn primary" id="licOk">Activate</button>
     </div>
@@ -280,7 +280,7 @@ function gate(){
   if(isPro()) return true;
   const used = +(store.get('xray_uses')||0);
   if(used < FREE_USES){ store.set('xray_uses', used+1); return true; }
-  $('#licMsg').textContent = 'Your free analysis is used. The full version is a one-time $10: unlimited workbooks, audit PDF export, and every update.';
+  $('#licMsg').textContent = 'Your free analysis is used. The full version is a one-time $20: unlimited workbooks, audit PDF export, and every update.';
   $('#licModal').classList.add('on'); return false;
 }
 
@@ -349,6 +349,10 @@ function analyze(wb, name){
   const edges=[]; // [from,to] from = precedent, to = dependent
   const N=(id,sheet,addr)=>{ let n=nodes.get(id); if(!n){ n={id,sheet,addr,formula:null,value:undefined,deps:new Set(),dependents:new Set(),flags:new Set()}; nodes.set(id,n);} return n; };
   const rowForms={}; // sheet -> row -> [{addr,rel}]
+  const colForms={}; // sheet -> col -> [{addr,r,rel,id,agg}]
+  const relAt={}; // sheet -> addr -> rel form of formula
+  const consts=[]; // numeric typed cells
+  const AGG=/^\s*(SUM|SUBTOTAL|AVERAGE|MIN|MAX|COUNT|COUNTA|AGGREGATE)\s*\(/i;
   let externalCount=0;
 
   wb.SheetNames.forEach(sh=>{
@@ -372,15 +376,29 @@ function analyze(wb, name){
         const hc=lit.filter(x=>x.includes('.')?!['0.5','1.0'].includes(x):!(+x<=12||['24','52','60','100','365','1000'].includes(x)));
         if(hc.length){ n.flags.add('hardcoded'); n.hard=hc; }
         const rc=XLSX.utils.decode_cell(addr);
-        (rowForms[sh]??={})[rc.r]??=[]; rowForms[sh][rc.r].push({addr,c:rc.c,rel:relForm(cell.f,addr),id});
+        const rel=relForm(cell.f,addr);
+        (rowForms[sh]??={})[rc.r]??=[]; rowForms[sh][rc.r].push({addr,c:rc.c,rel,id});
+        (colForms[sh]??={})[rc.c]??=[]; colForms[sh][rc.c].push({addr,r:rc.r,rel,id,agg:AGG.test(cell.f)});
+        (relAt[sh]??={})[addr]=rel;
       } else if(cell.v!==undefined){
+        if(cell.t==='n') consts.push({sh,addr,id,v:cell.v});
         const n=nodes.get(id); if(n){ n.value=cell.v; }
         else nodes.set(id,{id,sheet:sh,addr,formula:null,value:cell.v,deps:new Set(),dependents:new Set(),flags:new Set(),lazy:true});
       }
     });
   });
+  // typed numbers sitting where the surrounding cells are all the same formula
+  consts.forEach(k=>{
+    const rc=XLSX.utils.decode_cell(k.addr), R=relAt[k.sh]||{};
+    const at=(r,c)=>r<0||c<0?undefined:R[XLSX.utils.encode_cell({r,c})];
+    const u=at(rc.r-1,rc.c), d=at(rc.r+1,rc.c), l=at(rc.r,rc.c-1), rr=at(rc.r,rc.c+1);
+    if((u&&u===d)||(l&&l===rr)){
+      let n=nodes.get(k.id); if(!n){ n={id:k.id,sheet:k.sh,addr:k.addr,formula:null,value:k.v,deps:new Set(),dependents:new Set(),flags:new Set()}; nodes.set(k.id,n); }
+      n.flags.add('typed');
+    }
+  });
   // drop plain value cells no formula points to
-  for(const [id,n] of nodes){ if(!n.formula && n.dependents.size===0) nodes.delete(id); }
+  for(const [id,n] of nodes){ if(!n.formula && n.dependents.size===0 && !n.flags.has('typed')) nodes.delete(id); }
   for(const n of nodes.values()) for(const d of n.deps){ if(nodes.has(d)) edges.push([d,n.id]); }
 
   // inconsistent rows
@@ -392,6 +410,18 @@ function analyze(wb, name){
       if(adjL&&adjR&&L.rel===R.rel&&me.rel!==L.rel) nodes.get(me.id)?.flags.add('inconsistent');
       else if(adjL&&!adjR&&list[i-2]&&list[i-2].c===me.c-2&&list[i-2].rel===L.rel&&me.rel!==L.rel) nodes.get(me.id)?.flags.add('inconsistent');
       else if(adjR&&!adjL&&list[i+2]&&list[i+2].c===me.c+2&&list[i+2].rel===R.rel&&me.rel!==R.rel) nodes.get(me.id)?.flags.add('inconsistent');
+    }
+  }));
+
+  // inconsistent columns (monthly models run down the page)
+  Object.values(colForms).forEach(cols=>Object.values(cols).forEach(list=>{
+    list.sort((a,b)=>a.r-b.r);
+    for(let i=0;i<list.length;i++){
+      const U=list[i-1], D=list[i+1], me=list[i];
+      const adjU=U&&U.r===me.r-1, adjD=D&&D.r===me.r+1;
+      if(adjU&&adjD&&U.rel===D.rel&&me.rel!==U.rel) nodes.get(me.id)?.flags.add('inconsistent');
+      else if(!me.agg&&adjU&&!adjD&&list[i-2]&&list[i-2].r===me.r-2&&list[i-2].rel===U.rel&&me.rel!==U.rel) nodes.get(me.id)?.flags.add('inconsistent');
+      else if(!me.agg&&adjD&&!adjU&&list[i+2]&&list[i+2].r===me.r+2&&list[i+2].rel===D.rel&&me.rel!==D.rel) nodes.get(me.id)?.flags.add('inconsistent');
     }
   }));
 
@@ -415,7 +445,8 @@ function analyze(wb, name){
     circular:{label:'Circular references',cls:'bad',items:cycles.flat()},
     broken:{label:'Broken references (#REF!)',cls:'ref',items:ids.filter(i=>nodes.get(i).flags.has('broken'))},
     hardcoded:{label:'Hardcoded numbers in formulas',cls:'warn',items:ids.filter(i=>nodes.get(i).flags.has('hardcoded'))},
-    inconsistent:{label:'Inconsistent formulas in a row',cls:'warn',items:ids.filter(i=>nodes.get(i).flags.has('inconsistent'))},
+    inconsistent:{label:'Formulas that break the pattern',cls:'warn',items:ids.filter(i=>nodes.get(i).flags.has('inconsistent'))},
+    typed:{label:'Typed numbers where a formula should be',cls:'warn',items:ids.filter(i=>nodes.get(i).flags.has('typed'))},
     external:{label:'Links to other files',cls:'acc',items:ids.filter(i=>nodes.get(i).flags.has('external'))},
     output:{label:'Key outputs (nothing depends on them)',cls:'out',items:ids.filter(i=>nodes.get(i).flags.has('output')).sort((a,b)=>nodes.get(b).depth-nodes.get(a).depth)},
   };
@@ -449,7 +480,7 @@ function showIssue(k,el){
 }
 function showCell(id){
   const n=M.nodes.get(id); if(!n) return; const d=$('#detail');
-  const tags=[...n.flags].map(f=>`<span class="tag ${({circular:'bad',broken:'ref',hardcoded:'warn',inconsistent:'warn',external:'acc',output:'out'})[f]}">${f}</span>`).join('');
+  const tags=[...n.flags].map(f=>`<span class="tag ${({circular:'bad',broken:'ref',hardcoded:'warn',inconsistent:'warn',typed:'warn',external:'acc',output:'out'})[f]}">${f}</span>`).join('');
   const val=n.value===undefined?'':(typeof n.value==='number'?n.value.toLocaleString(undefined,{maximumFractionDigits:6}):String(n.value));
   d.innerHTML=`<h3>Cell</h3><div class="addr">${esc(id)}</div><div style="margin:6px 0">${tags}</div>
    ${n.formula?`<div class="f">=${esc(n.formula)}</div>`:`<div class="f" style="color:var(--muted)">${n.isRange?'range input':'input value'}</div>`}
@@ -462,7 +493,7 @@ function showCell(id){
 
 /* ---------- graph ---------- */
 let sim, gNode, gLink, zoomBehavior, svg, g, visible=new Set(), issuesOnly=false;
-function nodeColor(n){ if(n.flags.has('circular'))return'#FF5C6C'; if(n.flags.has('broken'))return'#C084FC'; if(n.flags.has('hardcoded')||n.flags.has('inconsistent'))return'#FFB454'; if(n.flags.has('output'))return'#3DDC97'; if(n.formula)return sheetColor[n.sheet]||'#5B9CFF'; return'#4b5d73'; }
+function nodeColor(n){ if(n.flags.has('circular'))return'#FF5C6C'; if(n.flags.has('broken'))return'#C084FC'; if(n.flags.has('hardcoded')||n.flags.has('inconsistent')||n.flags.has('typed'))return'#FFB454'; if(n.flags.has('output'))return'#3DDC97'; if(n.formula)return sheetColor[n.sheet]||'#5B9CFF'; return'#4b5d73'; }
 function renderGraph(){
   svg=d3.select('#graph'); svg.selectAll('*').remove();
   const W=$('#graphWrap').clientWidth,H=$('#graphWrap').clientHeight;
@@ -489,7 +520,7 @@ $('#btnFit').onclick=fit;
 $('#btnIssuesOnly').onclick=()=>{ issuesOnly=!issuesOnly; $('#btnIssuesOnly').classList.toggle('primary',issuesOnly); applySheetFilter(); };
 function applySheetFilter(){
   const on=new Set([...$('#sheets').querySelectorAll('input:checked')].map(i=>i.dataset.sheet));
-  const bad=n=>['circular','broken','hardcoded','inconsistent','external'].some(f=>n.flags.has(f));
+  const bad=n=>['circular','broken','hardcoded','inconsistent','typed','external'].some(f=>n.flags.has(f));
   const show=n=>on.has(n.sheet)&&(!issuesOnly||bad(n)||[...n.dependents].some(d=>M.nodes.get(d)&&bad(M.nodes.get(d))));
   gNode.style('display',d=>show(d)?null:'none');
   gLink.style('display',d=>show(d.source)&&show(d.target)?null:'none');
@@ -510,12 +541,12 @@ $('#find').addEventListener('keydown',e=>{ if(e.key!=='Enter') return; let q=$('
 
 /* ---------- PDF ---------- */
 $('#btnPdf').onclick=()=>{
-  if(!isPro()){ $('#licMsg').textContent='The audit PDF is part of the full version ($10, one time).'; $('#licModal').classList.add('on'); return; }
+  if(!isPro()){ $('#licMsg').textContent='The audit PDF is part of the full version ($20, one time).'; $('#licModal').classList.add('on'); return; }
   const {jsPDF}=window.jspdf; const doc=new jsPDF({unit:'pt',format:'a4'}); const Wp=595, m=44; let y=m;
   const line=(t,size=10,bold=false,color=[30,36,44])=>{ doc.setFont('helvetica',bold?'bold':'normal'); doc.setFontSize(size); doc.setTextColor(...color); const lines=doc.splitTextToSize(t,Wp-2*m); lines.forEach(l=>{ if(y>800){doc.addPage();y=m;} doc.text(l,m,y); y+=size*1.35; }); };
   line('Excel Formula X-Ray · Audit report',18,true); line(M.name+'  ·  '+new Date().toLocaleString(),9,false,[110,120,135]); y+=8;
   line(`Sheets ${M.sheets.length}   Formulas ${M.formulaCount}   Dependencies ${M.edges.length}   Max chain depth ${M.maxDepth}`,10,true); y+=10;
-  const score=Math.max(0,100-M.issues.circular.items.length*15-M.issues.broken.items.length*8-M.issues.inconsistent.items.length*3-Math.min(30,M.issues.hardcoded.items.length));
+  const score=Math.max(0,100-M.issues.circular.items.length*15-M.issues.broken.items.length*8-M.issues.inconsistent.items.length*3-M.issues.typed.items.length*3-Math.min(30,M.issues.hardcoded.items.length));
   line(`Model health score: ${score}/100`,13,true,score>80?[22,140,90]:score>50?[200,130,20]:[200,50,60]); y+=8;
   Object.entries(M.issues).forEach(([k,v])=>{ y+=6; line(`${v.label}: ${v.items.length}`,11,true); if(k==='circular'&&M.cycles.length) M.cycles.forEach((c,i)=>line(`Loop ${i+1}: ${c.join(' → ')}`,9)); else v.items.slice(0,40).forEach(id=>{ const n=M.nodes.get(id); line(`${id}${n.formula?'   ='+n.formula.slice(0,90):''}${n.hard?'   ['+n.hard.join(', ')+']':''}`,9); }); if(v.items.length>40) line(`… and ${v.items.length-40} more`,9,false,[110,120,135]); });
   y+=14; line('Generated locally in the browser by Excel Formula X-Ray (fluxelerate.com). No file data was uploaded.',8,false,[110,120,135]);
